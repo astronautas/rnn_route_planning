@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from functools import reduce
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.layers import Dense, Activation, LSTM, Embedding, Flatten, TimeDistributed
+from tensorflow.keras.layers import Dense, Activation, LSTM, Embedding, Flatten, TimeDistributed, GRU
 from tensorflow.keras.models import Sequential
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.callbacks import Callback, EarlyStopping
@@ -49,7 +49,11 @@ def transform(episodes):
         train_data = list(map(
                             lambda step: reduce(list.__add__, 
                                 map(
-                                    lambda nbp: [nbp["best_travel_time"], nbp["length"], nbp["dist_to_goal"]], 
+                                    lambda nbp: [
+                                        #nbp["is_highway"], 
+                                        nbp["best_travel_time"], 
+                                        nbp["length"], 
+                                        nbp["dist_to_goal"]], 
                                 step["neighbour_props"])), 
                             episode["shortest_path"]))
 
@@ -69,17 +73,26 @@ def train(episodes, model):
     early_stop = EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=1, mode='auto')
 
     for episode in episodes:
-        for idx in range(0, len(episode[0])):
-            ex = episode[0][idx]
-            label = np.array(episode[1][idx], ndmin=3)
 
-            x = ex[np.newaxis, ...][np.newaxis, ...]
+        # episode_X = np.array(list(map(lambda x: x[np.newaxis, ...][np.newaxis, ...], episode[0])))
+        # episode_Y = np.array(list(map(lambda y: np.array(y, ndmin=3), episode[1])))
 
-            model.fit(x, label, epochs=1, batch_size=1,
-                    validation_split=0.2, verbose=0,
-                    callbacks=[PrintDot()])
+        # model.fit(episode_X, episode_Y, epochs=20, batch_size=len(episode[0]),
+        # validation_split=0.2, verbose=0,
+        # callbacks=[])
 
-        model.reset_states()
+        #for times in range(0, 5):
+            for idx in range(0, len(episode[0])):
+                ex = episode[0][idx]
+                label = np.array(episode[1][idx], ndmin=3)
+
+                x = ex[np.newaxis, ...][np.newaxis, ...]
+
+                model.fit(x, label, epochs=1, batch_size=1,
+                        validation_split=0.2, verbose=0,
+                        callbacks=[])
+
+            model.reset_states()
 
 episodes = []
 
@@ -101,7 +114,9 @@ input_shape = transformed_episodes[0][0].shape[1]
 n_batch = 1
 
 model = Sequential()
-model.add(LSTM(units=1000, dropout=0.7, recurrent_dropout=0.7, batch_input_shape=(1, 1, input_shape), return_sequences=True, stateful=True))
+model.add(GRU(units=1024, dropout=0.5, recurrent_dropout=0.5, batch_input_shape=(1, 1, input_shape), return_sequences=True, stateful=True))
+model.add(GRU(units=1024, dropout=0.5, recurrent_dropout=0.5, return_sequences=True, stateful=True))
+model.add(GRU(units=1024, dropout=0.5, recurrent_dropout=0.5, return_sequences=True, stateful=True))
 # model.add(TimeDistributed(Dense(1, activation='sigmoid')))
 model.add(Dense(transformed_episodes[0][1].shape[1], activation='softmax'))
 model.compile(loss = 'categorical_crossentropy', optimizer='adam', metrics = ['accuracy'])
@@ -120,7 +135,7 @@ label = np.array(test_episodes[0][1][0], ndmin=3)
 x = ex[np.newaxis, ...][np.newaxis, ...]
 
 total_score = 0
-total = 0 
+total = 0
 for episode in test_episodes:
     for idx in range(0, len(episode[0])):
         ex = episode[0][idx]

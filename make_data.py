@@ -4,15 +4,29 @@ import numpy as np
 import json
 import datetime
 import geopy.distance
+from pathlib import Path
+from scipy.spatial.distance import cosine
+import math
 
 speeds = {
     "residential": 50,
     "secondary": 90,
     "primary": 90,
     "motorway": 120,
+    "motorway_link": 120,
     "trunk": 110,
     "tertiary": 90,
     "default": 70
+}
+
+road_types = {
+    "residential": 0,
+    "secondary": 1,
+    "primary": 2,
+    "motorway": 3,
+    "default": 6,
+    "trunk": 4,
+    "tertiary": 5,
 }
 
 def build_max_speeds(edges):
@@ -63,6 +77,16 @@ def build_shortest_path(graph, shortest_path, goal_node_id):
 
                 curr_ng_props = graph.node[curr_neighbour_name]
 
+                #neighbour_props["road_type"] = road_types[edge_data["highway"][0]] if edge_data["highway"][0] in road_types else road_types["default"]
+                g_coords = [graph.node[goal_node_id]["x"], graph.node[goal_node_id]["y"]]
+                curr_coords = [graph.node[curr_node_name]["x"], graph.node[curr_node_name]["y"]]
+                curr_ng_coords = [graph.node[curr_neighbour_name]["x"], graph.node[curr_neighbour_name]["y"]]
+                #u = (np.array(g_coords) - np.array(curr_coords))
+                #v = (np.array(g_coords) - np.array(curr_ng_coords))
+
+                #cosine_dist = np.dot(u, v) / (np.sqrt(numpy.dot(u,v)) * np.sqrt(numpy.dot(u,v)))
+                #neighbour_props["cosine_distance"] = cosine_dist if not(math.isnan(cosine_dist)) else 200
+                neighbour_props["is_highway"] = 1 if edge_data["highway"] in ["motorway", "trunk"] else 0
                 neighbour_props["best_travel_time"] = edge_data["best_travel_time"]
                 neighbour_props["length"] = edge_data["length"]
                 neighbour_props["dist_to_goal"] = geopy.distance.distance(curr_neighbour_coords_ne_format, goal_node_coords_ne_format).m
@@ -109,14 +133,21 @@ def build_one_episode_in_env(G):
     return episode
 
 
-envs = [(54.791149, 25.095732, 15000)]
+envs = [(54.791149, 25.095732, 10000)]
 episodes = []
 
 for env in envs:
-    print("Pulling data from OSM...")
-    G = ox.graph_from_point((env[0], env[1]), distance=env[2], network_type='drive')
+    name = f'{env[0]}, {env[1]}, {env[2]}.graphml'
 
-    for i in range(0, 400):
+    if Path('data/', name).is_file():
+        print("Pulling data from file...")
+        G = ox.load_graphml(name)
+    else:
+        print("Pulling data from OSM...")
+        G = ox.graph_from_point((env[0], env[1]), distance=env[2], network_type='drive')
+        ox.save_graphml(G, filename=name)
+
+    for i in range(0, 100):
         print("Generating episode: ", i)
         episode = build_one_episode_in_env(G)
         if episode != None: episodes.append(episode)
@@ -128,6 +159,6 @@ np.random.shuffle(episodes)
 episodes_json = json.dumps(episodes)
 
 now = datetime.datetime.now()
-with open("episodes.json", "w+") as file:
+with open("episodes.json", "w") as file:
     file.write(episodes_json)
     file.close()
