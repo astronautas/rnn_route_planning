@@ -8,6 +8,8 @@ from pathlib import Path
 from scipy.spatial.distance import cosine
 import math
 
+from osmnx_utils import isfloat
+
 speeds = {
     "residential": 50,
     "secondary": 90,
@@ -29,6 +31,25 @@ road_types = {
     "tertiary": 5,
 }
 
+def unit_vector(vector):
+    """ Returns the unit vector of the vector.  """
+    return vector / np.linalg.norm(vector)
+
+def angle_between(v1, v2):
+    """ Returns the angle in radians between vectors 'v1' and 'v2'::
+
+            >>> angle_between((1, 0, 0), (0, 1, 0))
+            1.5707963267948966
+            >>> angle_between((1, 0, 0), (1, 0, 0))
+            0.0
+            >>> angle_between((1, 0, 0), (-1, 0, 0))
+            3.141592653589793
+    """
+    v1_u = unit_vector(v1)
+    v2_u = unit_vector(v2)
+    return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
+
+
 def build_max_speeds(edges):
     for edge in edges:
         edge_data = edge[-1]
@@ -42,9 +63,12 @@ def build_max_speeds(edges):
                 edge_data["maxspeed"] = speeds["default"]
         else:
             if isinstance(edge_data["maxspeed"], list):
-                edge_data["maxspeed"] = np.mean(list(map(lambda speed: float(speed), edge_data["maxspeed"])))
+                edge_data["maxspeed"] = np.mean(list(map(lambda speed: float(speed) if isfloat(speed) else 0, edge_data["maxspeed"])))
             else:
-                edge_data["maxspeed"] = float(edge_data["maxspeed"])
+                if isfloat(edge_data["maxspeed"]):
+                    edge_data["maxspeed"] = float(edge_data["maxspeed"])
+                else:    
+                    edge_data["maxspeed"] = speeds[edge_data["highway"][0]] if isinstance(edge_data["maxspeed"], list) else speeds[edge_data["highway"]]
 
 def add_time_to_roads(edges):
     for edge in edges:
@@ -66,6 +90,7 @@ def build_shortest_path(graph, shortest_path, goal_node_id):
         if next_node_name != None:
 
             neighbours = graph.neighbors(curr_node_name)
+
             for idx, curr_neighbour_name in enumerate(neighbours):
                 if curr_neighbour_name == next_node_name: step_data["next_node_index"] = idx
 
@@ -77,18 +102,20 @@ def build_shortest_path(graph, shortest_path, goal_node_id):
 
                 curr_ng_props = graph.node[curr_neighbour_name]
 
-                #neighbour_props["road_type"] = road_types[edge_data["highway"][0]] if edge_data["highway"][0] in road_types else road_types["default"]
-                g_coords = [graph.node[goal_node_id]["x"], graph.node[goal_node_id]["y"]]
-                curr_coords = [graph.node[curr_node_name]["x"], graph.node[curr_node_name]["y"]]
-                curr_ng_coords = [graph.node[curr_neighbour_name]["x"], graph.node[curr_neighbour_name]["y"]]
-                #u = (np.array(g_coords) - np.array(curr_coords))
-                #v = (np.array(g_coords) - np.array(curr_ng_coords))
+                g_coords = (graph.node[goal_node_id]["x"], graph.node[goal_node_id]["y"])
+                curr_coords = (graph.node[curr_node_name]["x"], graph.node[curr_node_name]["y"])
+                curr_ng_coords = (graph.node[curr_neighbour_name]["x"], graph.node[curr_neighbour_name]["y"])
 
-                #cosine_dist = np.dot(u, v) / (np.sqrt(numpy.dot(u,v)) * np.sqrt(numpy.dot(u,v)))
-                #neighbour_props["cosine_distance"] = cosine_dist if not(math.isnan(cosine_dist)) else 200
+                angle_to_g = math.degrees(angle_between(np.subtract(curr_ng_coords, curr_coords), np.subtract(g_coords, curr_coords))) 
+    
+                if math.isnan(angle_to_g):
+                    continue
+
+                neighbour_props["angle_to_goal"] = angle_to_g
+
                 neighbour_props["is_highway"] = 1 if edge_data["highway"] in ["motorway", "trunk"] else 0
                 neighbour_props["best_travel_time"] = edge_data["best_travel_time"]
-                neighbour_props["length"] = edge_data["length"]
+                neighbour_props["not_oneway"] = 1 if ("oneway" in edge_data) and (edge_data["oneway"] == False) else -1
                 neighbour_props["dist_to_goal"] = geopy.distance.distance(curr_neighbour_coords_ne_format, goal_node_coords_ne_format).m
 
                 curr_node_neighbours_props.append(neighbour_props)
@@ -101,7 +128,6 @@ def build_shortest_path(graph, shortest_path, goal_node_id):
 def build_one_episode_in_env(G):
     episode = {}
 
-    # Remove nodes that have > 4 edges, its for padding the data
     start_node_id = np.random.choice(G.nodes)
     goal_node_id = np.random.choice(G.nodes)
 
@@ -118,6 +144,7 @@ def build_one_episode_in_env(G):
     # Generate ground truth shortest path (Dijkstra)
     try:
         route = nx.shortest_path(G, start_node_id, goal_node_id, weight='best_travel_time')
+        #ox.plot_graph_route(G, route)
     except nx.NetworkXNoPath:
         print("[ERROR] No path found")
         return None
@@ -128,12 +155,16 @@ def build_one_episode_in_env(G):
     episode["goal"]["x"] = G.node[goal_node_id]["x"]
     episode["goal"]["y"] = G.node[goal_node_id]["y"]
 
+    episode["start"] = {}
+    episode["start"]["x"] = G.node[start_node_id]["x"]
+    episode["start"]["y"] = G.node[start_node_id]["y"]
+
     episode["shortest_path"] = build_shortest_path(G, route, goal_node_id)
 
     return episode
 
 
-envs = [(54.791149, 25.095732, 10000)]
+envs = [(55.917953, 21.066187, 500), (55.727253, 24.362339, 3000), (54.690272, 25.261696, 8000), (55.693357, 21.142402, 15000), (55.916457, 21.424276, 20000)]
 episodes = []
 
 for env in envs:
@@ -147,7 +178,7 @@ for env in envs:
         G = ox.graph_from_point((env[0], env[1]), distance=env[2], network_type='drive')
         ox.save_graphml(G, filename=name)
 
-    for i in range(0, 100):
+    for i in range(0, 200):
         print("Generating episode: ", i)
         episode = build_one_episode_in_env(G)
         if episode != None: episodes.append(episode)
