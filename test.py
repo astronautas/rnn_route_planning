@@ -25,7 +25,9 @@ import time
 from threading import Thread
 import random
 
-#from osmnx_utils import append_node_to_route
+import argparse
+import os
+import sys
 
 # RE-BUILD A MODEL
 # Use diff. batch size than when training
@@ -47,81 +49,173 @@ model.summary()
 
 model.set_weights(old_weights)
 
-###### BUIILD A GRAPH ######
-env = (55.917953, 21.066187, 8000)
-name = f'{env[0]}, {env[1]}, {env[2]}.graphml'
+### MODEL NAVIGATION WRAPPER ###
+def navigation_wrapper(G, start_node_id, goal_node_id, stop_after_steps):
+    curr_node_id = start_node_id
+    ml_route = []
+    visited = collections.deque(maxlen=7)
 
-if Path('data/', name).is_file():
-    print("Pulling data from file...")
-    G = ox.load_graphml(name)
-else:
-    print("Pulling data from OSM...")
-    G = ox.graph_from_point((env[0], env[1]), distance=env[2], network_type='drive')
-    ox.save_graphml(G, filename=name)
+    # Start node
+    ml_route.append(curr_node_id)
+    use_random_actions = False
 
-start_node_id = np.random.choice(G.nodes)
-goal_node_id = np.random.choice(G.nodes)
+    while curr_node_id != goal_node_id:
+        if stop_after_steps and len(ml_route) > stop_after_steps:
+            return False
 
-# Add the speed feature to edges (we're gonna by time later)
-build_max_speeds(G.edges(data=True))
+        x0, ng_ids = get_ng_data(G, curr_node_id, goal_node_id)
+        x = pad_sequences([x0], maxlen=20, dtype='float')[0]
+        x = x[np.newaxis, ...][np.newaxis, ...]
 
-# Add time to edge
-add_time_to_roads(G.edges(data=True))
+        prediction = model.predict(x, batch_size=1)
+        next_node_index = model.predict_classes(x, batch_size=1).tolist()[0][0]
 
-###### EVALUATION ######
-truth_route = nx.shortest_path(G, start_node_id, goal_node_id, weight='best_travel_time')
+        integer = random.randint(0, 100)
 
-curr_node_id = start_node_id
-ml_route = []
-visited = collections.deque(maxlen=7)
+        if use_random_actions:
+            curr_node_id = np.random.choice(ng_ids)
+        else:
+            if len(ng_ids) <= next_node_index:
+                curr_node_id = visited[-1]
+                use_random_actions = True
+            else:
+                curr_node_id = ng_ids[next_node_index]
+                x0_list = x0.tolist()[next_node_index * 4 + 3]
+                print("Dist to goal: ", x0_list)
 
-# Start node
-ml_route.append(curr_node_id)
-use_random_actions = False
-
-while curr_node_id != goal_node_id:
-    x0, ng_ids = get_ng_data(G, curr_node_id, goal_node_id)
-    x = pad_sequences([x0], maxlen=20, dtype='float')[0]
-    x = x[np.newaxis, ...][np.newaxis, ...]
-
-
-    prediction = model.predict(x, batch_size=1)
-    next_node_index = model.predict_classes(x, batch_size=1).tolist()[0][0]
-
-    integer = random.randint(0, 100)
-
-    if use_random_actions:
-        print("Random")
-        curr_node_id = np.random.choice(ng_ids)
-    else:
-        if len(ng_ids) <= next_node_index:
-            curr_node_id = visited[-1]
+        visited.append(curr_node_id)
+        
+        if visited.count(curr_node_id) >= 4:
             use_random_actions = True
         else:
-            curr_node_id = ng_ids[next_node_index]
-            x0_list = x0.tolist()[next_node_index * 4 + 3]
-            print("Dist to goal: ", x0_list)
+            use_random_actions = False
+        
+        ml_route.append(curr_node_id)  
 
+    return ml_route
 
-    visited.append(curr_node_id)
-    
-    if visited.count(curr_node_id) >= 4:
-        use_random_actions = True
-    else:
-        use_random_actions = False
+### ARRIVAL RATE ###
+def run_arrival_rate_evaluation(G):
+    arrived = 0.0
+    total = 0.0
+    exp_count = 10
 
-    ml_route.append(curr_node_id)
+    for i in range(0, 50):
+        start_node_id = np.random.choice(G.nodes)
+        goal_node_id = np.random.choice(G.nodes)
+
+        truth_route = nx.shortest_path(G, start_node_id, goal_node_id, weight='best_travel_time')
+        truth_route_steps = len(truth_route)
+        
+        predicted_route = navigation_wrapper(G, start_node_id, goal_node_id, truth_route_steps)
+        total += 1.0
+
+        if predicted_route:
+            arrived += 1.0
+        
+        print("Rate: ", arrived / total)
+
+    return arrived / total    
+
 
 ### TIME DIVERGENCE ###
-gt_duration = get_route_duration(truth_route, G)
-ml_duration = get_route_duration(ml_route, G)
+def run_optimality_evaluation(G):
+    start_node_id = np.random.choice(G.nodes)
+    goal_node_id = np.random.choice(G.nodes)
 
-print("------ METRICS ------")
-print("GT duration: ", gt_duration, ". ML duration: ", ml_duration, ". Abs Diff: ", ml_duration - gt_duration, ". Ratio: ", gt_duration / ml_duration)
-print("---------------------")
+    truth_route = nx.shortest_path(G, start_node_id, goal_node_id, weight='best_travel_time')
 
-###### PLOT GT AND ML PATHS ######
-ox.plot_graph_route(G, truth_route)
-ox.plot_graph_route(G, ml_route)
+    curr_node_id = start_node_id
+    ml_route = []
+    visited = collections.deque(maxlen=7)
 
-input()
+    # Start node
+    ml_route.append(curr_node_id)
+    use_random_actions = False
+
+    while curr_node_id != goal_node_id:
+        x0, ng_ids = get_ng_data(G, curr_node_id, goal_node_id)
+        x = pad_sequences([x0], maxlen=20, dtype='float')[0]
+        x = x[np.newaxis, ...][np.newaxis, ...]
+
+        prediction = model.predict(x, batch_size=1)
+        next_node_index = model.predict_classes(x, batch_size=1).tolist()[0][0]
+
+        integer = random.randint(0, 100)
+
+        if use_random_actions:
+            print("Random")
+            curr_node_id = np.random.choice(ng_ids)
+        else:
+            if len(ng_ids) <= next_node_index:
+                curr_node_id = visited[-1]
+                use_random_actions = True
+            else:
+                curr_node_id = ng_ids[next_node_index]
+                x0_list = x0.tolist()[next_node_index * 4 + 3]
+                print("Dist to goal: ", x0_list)
+
+
+        visited.append(curr_node_id)
+        
+        if visited.count(curr_node_id) >= 4:
+            use_random_actions = True
+        else:
+            use_random_actions = False
+
+        ml_route.append(curr_node_id)    
+
+    gt_duration = get_route_duration(truth_route, G)
+    ml_duration = get_route_duration(ml_route, G)
+
+    print("------ METRICS ------")
+    print("GT duration: ", gt_duration, ". ML duration: ", ml_duration, ". Abs Diff: ", ml_duration - gt_duration, ". Ratio: ", gt_duration / ml_duration)
+    print("---------------------")
+
+    ###### PLOT GT AND ML PATHS ######
+    ox.plot_graph_route(G, truth_route)
+    ox.plot_graph_route(G, ml_route)
+
+def create_arg_parser():
+    """"Creates and returns the ArgumentParser object."""
+
+    parser = argparse.ArgumentParser(description='RNN route planning test.')
+
+    parser.add_argument('--arrival_rate',
+                    help='Run arrival rate experiment (true/false)')
+
+    parser.add_argument('--optimality',
+                    help='Run time optimality experiment (true/false)')
+                    
+    return parser
+
+def prep_road_network():
+    ###### BUIILD A GRAPH ######
+    env = (55.917953, 21.066187, 8000)
+    name = f'{env[0]}, {env[1]}, {env[2]}.graphml'
+
+    if Path('data/', name).is_file():
+        print("Pulling data from file...")
+        G = ox.load_graphml(name)
+    else:
+        print("Pulling data from OSM...")
+        G = ox.graph_from_point((env[0], env[1]), distance=env[2], network_type='drive')
+        ox.save_graphml(G, filename=name)
+
+    # Add the speed feature to edges (we're gonna by time later)
+    build_max_speeds(G.edges(data=True))
+
+    # Add time to edge
+    add_time_to_roads(G.edges(data=True))
+
+    return G
+
+if __name__ == "__main__":
+    G = prep_road_network()
+
+    ### EXECUTION PART ###
+    arg_parser = create_arg_parser()
+    parsed_args = arg_parser.parse_args(sys.argv[1:])
+
+    if parsed_args.arrival_rate == "true":
+        run_arrival_rate_evaluation(G)
