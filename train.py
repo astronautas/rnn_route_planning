@@ -20,6 +20,10 @@ import numpy as np
 from tensorflow.keras.utils import multi_gpu_model
 from DataGenerator import DataGenerator
 
+import tensorflow.keras.backend as K
+from tensorflow.keras.losses import categorical_crossentropy
+
+from collections import defaultdict
 
 print(tf.__version__)
 
@@ -124,15 +128,6 @@ class LossHistory(Callback):
 
     def on_batch_end(self, batch, logs={}):
         print(logs)
-        
-        #plt.gca().lines[0].set_xdata(self.iterations); plt.gca().lines[0].set_ydata(self.losses); plt.gca().relim(); plt.gca().autoscale_view(); plt.pause(0.05);
-
-# curr_episode_sub_episodes_to_process_till_reset = 0
-# curr_episode_sub_episodes_processed = 0
-
-# class EpisodeResetCallback(Callback):
-#     def on_batch_begin(self, batch, logs={}):
-#         if 
 
 def chunks(l, n):
     # For item i in a range that is a length of l,
@@ -178,21 +173,36 @@ def test(test_episodes, model, batch_size):
 
     print(metrics)
 
+# <coords> : <count>
+timestep_prediction_coordinates = defaultdict(lambda: 0.0)
+
+# Custom loss, that discounts already visited nodes to escape loops
+def categorical_crossentropy_discounted_loops(yTrue, yPred):
+    res = categorical_crossentropy(yTrue, yPred)
+
+    # with tf.get_default_session().as_default() as df:
+    #     res_eval = res.eval()
+    
+    occ_tensor = tf.map_fn(lambda timesteps: tf.map_fn(lambda timestep_pred: 
+                            timestep_prediction_coordinates[timestep_pred._id], timesteps), yPred)
+
+    range = res.shape[1]
+
+    # Add to each sample of a batch, the loss of a loop
+    #occ_tensor = tf.zeros_like(res)
+    # occ_tensor = tf.Variable([], tf.float32)
+    return tf.add(res, occ_tensor)
+
 #### MAIN ####
+x = tf.Session().__enter__()
+
 episodes = []
 
 with open("episodes.json", "r") as file:
     episodes = json.load(file)
 
 # Squash json episode timestep properties
-episodes = transform(episodes)
-
-# Make more episodes by making partial episodes
-# episodes_partial = []
-# min_timesteps = len(min(map(lambda e: e[1], episodes), key=len))
-# max_timesteps = len(max(map(lambda e: e[1], episodes), key=len))
-# for curr_subseq_len in range(min_timesteps, max_timesteps):
-#     episodes_partial += list(filter(lambda sb: len(sb) > 0, subsample(episodes, curr_subseq_len)))
+episodes = transform(episodes)[0:20]
 
 # FLATTEN
 # episodes_partial = [item for sublist in episodes_partial for item in sublist]
@@ -238,6 +248,7 @@ model.add(TimeDistributed(Dense(len(placeholder_y), activation='softmax')))
 
 opt = RMSprop(lr=0.0008, rho=0.9, epsilon=None, decay=0.0)
 
+#model.compile(loss = 'categorical_crossentropy', optimizer = opt, metrics = ['accuracy'])
 model.compile(loss = 'categorical_crossentropy', optimizer = opt, metrics = ['accuracy'])
 model.summary()
 
@@ -247,31 +258,3 @@ test(test_episodes, model, batch_size)
 
 # SAVE MODEL
 model.save('model.h5')
-
-# 
-# #### TESTING ####
-
-# valid_split = 0 # BIG PROBLEM
-# accuracies = 0
-# acc_count = 0
-
-# # Reimport episodes, as we're gonna evaluate on full ones
-
-
-
-# for sub_episode_group in test_episodes:
-#     all_sub_episodes_group_X = np.array(list(map(lambda ep: ep[0], sub_episode_group)))
-#     all_sub_episodes_group_Y = np.array(list(map(lambda ep: ep[1], sub_episode_group)))
-
-#     all_sub_episodes_group_X = make_divisable_by_batches(batch_size=batch_size, data=all_sub_episodes_group_X, validation_split=valid_split)
-#     all_sub_episodes_group_Y = make_divisable_by_batches(batch_size=batch_size, data=all_sub_episodes_group_Y, validation_split=valid_split)
-
-#     score = model.evaluate(all_sub_episodes_group_X, all_sub_episodes_group_Y, batch_size=batch_size,verbose=0)
-    
-#     if len(score) > 0: accuracies += score[1]; acc_count += 1
-
-#     model.reset_states()
-    
-# print("[FINAL]: ", accuracies / acc_count)    
-
-# model.save('model.h5')
