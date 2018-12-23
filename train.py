@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from functools import reduce
 from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.layers import Dense, Activation, LSTM, Embedding, Flatten, TimeDistributed, GRU, Bidirectional
+from tensorflow.keras.layers import Dense, Activation, LSTM, Embedding, Flatten, TimeDistributed, GRU, Bidirectional, Lambda
 from tensorflow.keras.models import Sequential
 from sklearn.model_selection import train_test_split
 from sklearn import preprocessing
@@ -24,6 +24,12 @@ import tensorflow.keras.backend as K
 from tensorflow.keras.losses import categorical_crossentropy
 
 from collections import defaultdict
+
+import tensorflow.keras.backend as K
+
+import model_commons
+
+from random import shuffle
 
 print(tf.__version__)
 
@@ -136,7 +142,10 @@ def chunks(l, n):
         yield l[i:i+n]
 
 def bucketing(bucket_size, episodes, placeholder_timestep):
-    episode_batches = chunks(episodes, bucket_size)
+    episode_batches = list(chunks(episodes, bucket_size))
+
+    # Shuffle batches to fight overfitting (as they're passed here ordered by length)
+    shuffle(episode_batches)
 
     # Pad each chunk
     for episode_batch in episode_batches:
@@ -151,27 +160,27 @@ def bucketing(bucket_size, episodes, placeholder_timestep):
 
     return episodes
 
-def train(episodes, validation_episodes, model, batch_size):
+def train(episodes, validation_episodes, model, batch_size, G):
     training_generator = DataGenerator(list(map(lambda ep: ep[0], episodes)), list(map(lambda ep: ep[1], episodes)), 
-                                        batch_size=batch_size, shuffle=False)
+                                        batch_size=batch_size, shuffle=True, model=model, graph=G)
 
     validation_generator = DataGenerator(list(map(lambda ep: ep[0], validation_episodes)), list(map(lambda ep: ep[1], validation_episodes)), 
-                                        batch_size=batch_size, shuffle=False)
+                                        batch_size=batch_size, shuffle=True, model=model, graph=G)
 
     model.fit_generator(generator=training_generator,
             validation_data=validation_generator,
             use_multiprocessing=True,
-            workers=6, epochs=10)
+            workers=10, epochs=4)
 
-def test(test_episodes, model, batch_size):
+def test(test_episodes, model, batch_size, graph):
     generator = DataGenerator(list(map(lambda ep: ep[0], test_episodes)), list(map(lambda ep: ep[1], test_episodes)), 
-                                        batch_size=batch_size, shuffle=False)
+                                        batch_size=batch_size, shuffle=False, model=model, graph=graph)
 
     metrics = model.evaluate_generator(generator=generator,
             use_multiprocessing=True,
-            workers=6)
+            workers=10)
 
-    print(metrics)
+    print("Loss: ", metrics[0], "Accuracy: ", metrics[1])
 
 # <coords> : <count>
 timestep_prediction_coordinates = defaultdict(lambda: 0.0)
@@ -195,6 +204,7 @@ def categorical_crossentropy_discounted_loops(yTrue, yPred):
 
 #### MAIN ####
 x = tf.Session().__enter__()
+K.set_learning_phase(0)
 
 episodes = []
 
@@ -202,7 +212,7 @@ with open("episodes.json", "r") as file:
     episodes = json.load(file)
 
 # Squash json episode timestep properties
-episodes = transform(episodes)[0:20]
+episodes = transform(episodes)
 
 # FLATTEN
 # episodes_partial = [item for sublist in episodes_partial for item in sublist]
@@ -239,22 +249,19 @@ train_episodes = bucketing(bucket_size=batch_size, episodes=train_episodes, plac
 test_episodes = bucketing(bucket_size=batch_size, episodes=test_episodes, placeholder_timestep=[placeholder_x, placeholder_y])
 validation_episodes = bucketing(bucket_size=batch_size, episodes=validation_episodes, placeholder_timestep=[placeholder_x, placeholder_y])
 
-model = Sequential()
-model.add(GRU(use_bias=False, units=128, dropout=0.4, recurrent_dropout=0.4, batch_input_shape=(batch_size, None, len(placeholder_x)), 
-                return_sequences=True, stateful=False))
-model.add(GRU(use_bias=False, units=128, dropout=0.4, recurrent_dropout=0.4, return_sequences=True, stateful=False))
-model.add(GRU(use_bias=False, units=128, dropout=0.4, recurrent_dropout=0.4, return_sequences=True, stateful=False))
-model.add(TimeDistributed(Dense(len(placeholder_y), activation='softmax')))
+# SHUFFLE
+# np.random.shuffle(train_episodes)
+# np.random.shuffle(test_episodes)
+# np.random.shuffle(validation_episodes)
 
-opt = RMSprop(lr=0.0008, rho=0.9, epsilon=None, decay=0.0)
-
-#model.compile(loss = 'categorical_crossentropy', optimizer = opt, metrics = ['accuracy'])
-model.compile(loss = 'categorical_crossentropy', optimizer = opt, metrics = ['accuracy'])
+model = model_commons.get_model(batch_size=batch_size, timesteps=None, X_dim=len(placeholder_x), Y_dim=len(placeholder_y),
+                                activation=model_commons.softmax_with_temp)
 model.summary()
 
-train(train_episodes, validation_episodes, model, batch_size)
+graph = []
+train(train_episodes, validation_episodes, model, batch_size, graph)
 
-test(test_episodes, model, batch_size)
+test(test_episodes, model, batch_size, graph)
 
 # SAVE MODEL
 model.save('model.h5')

@@ -2,6 +2,8 @@ import numpy as np
 from scipy.spatial.distance import cosine
 import math
 import geopy.distance
+import networkx as nx
+import osmnx as ox
 
 def isfloat(value):
   try:
@@ -9,6 +11,8 @@ def isfloat(value):
     return True
   except ValueError:
     return False
+
+from pathlib import Path
 
 def build_max_speeds(edges):
     speeds = {
@@ -117,3 +121,22 @@ def get_route_duration(route, G):
         prev_node = node
 
     return duration
+
+# TODO - change 20 into a var
+def random_network_modification(G):
+    for i in range(0, 2):
+        index = np.random.choice(len(G.edges) - 1)
+        del G.edges[index]
+
+def build_graph(point):
+    name = f'{point[0]}, {point[1]}, {point[2]}.graphml'
+
+    if Path('data/', name).is_file():
+        print("Pulling data from file...")
+        G = ox.load_graphml(name)
+    else:
+        print("Pulling data from OSM...")
+        G = ox.graph_from_point((point[0], point[1]), distance=point[2], network_type='drive')
+        ox.save_graphml(G, filename=name)
+
+    return G

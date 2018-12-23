@@ -7,8 +7,10 @@ import geopy.distance
 from pathlib import Path
 from scipy.spatial.distance import cosine
 import math
+import asyncio
 
-from osmnx_utils import isfloat
+from osmnx_utils import isfloat, build_graph
+from concurrent.futures import ThreadPoolExecutor
 
 speeds = {
     "residential": 50,
@@ -163,25 +165,35 @@ def build_one_episode_in_env(G):
 
     return episode
 
+async def build_all_episodes(episodes, G):
+    tasks = []
 
-envs = [(55.917953, 21.066187, 500), (55.727253, 24.362339, 3000), (54.690272, 25.261696, 8000), (55.693357, 21.142402, 15000), (55.916457, 21.424276, 20000)]
+    for i in range(0, 2000):
+        tasks.append(asyncio.ensure_future(build_episode_task(i, episodes, G)))
+
+    print("Created all tasks...")
+    await asyncio.gather(*tasks)
+
+async def build_episode_task(id, episodes, G):
+    print("Generating episode: ", id)
+    episode = build_one_episode_in_env(G)
+
+    if episode != None: 
+        episodes.append(episode)
+
+envs = [(54.677183, 25.268343, 40000)]
 episodes = []
 
 for env in envs:
-    name = f'{env[0]}, {env[1]}, {env[2]}.graphml'
+    G = build_graph(envs[0])
 
-    if Path('data/', name).is_file():
-        print("Pulling data from file...")
-        G = ox.load_graphml(name)
-    else:
-        print("Pulling data from OSM...")
-        G = ox.graph_from_point((env[0], env[1]), distance=env[2], network_type='drive')
-        ox.save_graphml(G, filename=name)
+    loop = asyncio.get_event_loop()
+    loop.set_default_executor(ThreadPoolExecutor(1000))
 
-    for i in range(0, 200):
-        print("Generating episode: ", i)
-        episode = build_one_episode_in_env(G)
-        if episode != None: episodes.append(episode)
+    try:
+        loop.run_until_complete(build_all_episodes(episodes, G))
+    finally:
+        loop.close()
 
 # Shuffling reduces overfit
 np.random.shuffle(episodes)
