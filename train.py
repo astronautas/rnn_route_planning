@@ -212,7 +212,7 @@ with open("episodes.json", "r") as file:
     episodes = json.load(file)
 
 # Squash json episode timestep properties
-episodes = transform(episodes)
+episodes = transform(episodes)[0:20]
 
 # FLATTEN
 # episodes_partial = [item for sublist in episodes_partial for item in sublist]

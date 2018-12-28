@@ -146,7 +146,8 @@ def build_one_episode_in_env(G):
     # Generate ground truth shortest path (Dijkstra)
     try:
         route = nx.shortest_path(G, start_node_id, goal_node_id, weight='best_travel_time')
-        #ox.plot_graph_route(G, route)
+
+        #route = build_route(model=model, G=G, start_node_id=start_node_id, goal_node_id=goal_node_id, weight='best_travel_time')
     except nx.NetworkXNoPath:
         print("[ERROR] No path found")
         return None
