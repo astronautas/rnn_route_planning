@@ -30,6 +30,7 @@ import tensorflow.keras.backend as K
 import model_commons
 
 from random import shuffle
+import data_utils
 
 print(tf.__version__)
 
@@ -101,7 +102,7 @@ def add_padding_x(episodes):
             max_len_x = len(train_x) if len(train_x) > max_len_x else max_len_x          
 
     for episode in episodes:
-        episode[0] = pad_sequences(episode[0], maxlen=max_len_x, dtype='float').tolist()
+        episode[0] = pad_sequences(episode[0], padding='post', maxlen=max_len_x, dtype='float', value=0.0).tolist()
 
 def transform(episodes):
     transformed_episodes = []
@@ -170,7 +171,7 @@ def train(episodes, validation_episodes, model, batch_size, G):
     model.fit_generator(generator=training_generator,
             validation_data=validation_generator,
             use_multiprocessing=True,
-            workers=10, epochs=4)
+            workers=10, epochs=10)
 
 def test(test_episodes, model, batch_size, graph):
     generator = DataGenerator(list(map(lambda ep: ep[0], test_episodes)), list(map(lambda ep: ep[1], test_episodes)), 
@@ -212,7 +213,7 @@ with open("episodes.json", "r") as file:
     episodes = json.load(file)
 
 # Squash json episode timestep properties
-episodes = transform(episodes)[0:20]
+episodes = transform(episodes)
 
 # FLATTEN
 # episodes_partial = [item for sublist in episodes_partial for item in sublist]

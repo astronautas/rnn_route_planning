@@ -182,11 +182,13 @@ async def build_episode_task(id, episodes, G):
     if episode != None: 
         episodes.append(episode)
 
-envs = [(54.677183, 25.268343, 40000)]
+envs = [(54.677194, 25.268333, 15000)]
 episodes = []
 
 for env in envs:
     G = build_graph(envs[0])
+
+    ox.plot_graph(G)
 
     loop = asyncio.get_event_loop()
     loop.set_default_executor(ThreadPoolExecutor(1000))

@@ -54,37 +54,6 @@ class DataGenerator(tensorflow.keras.utils.Sequence):
             X = np.asarray(self.X[index * self.batch_size:index * self.batch_size + self.batch_size])
             Y = np.asarray(self.Y[index * self.batch_size:index * self.batch_size + self.batch_size])
 
-        # X_upd = np.empty_like(X)
-        # Y_upd = np.empty_like(Y)
-
-        # for ex_i in range(0, len(X)):
-        #     curr_episode_X = np.empty_like(X[ex_i])
-        #     curr_episode_Y = np.empty_like(Y[ex_i])
-
-        #     curr_episode_X[0] = X[ex_i][0]
-        #     curr_episode_Y[0] = Y[ex_i][0]
-
-        #     for t in range(1, len(Y[ex_i])):
-        #         if np.random.rand() < 0.5:
-        #             curr_episode_X[t] = X[ex_i][t]
-        #             curr_episode_Y[t] = Y[ex_i][t]
-        #         else:
-        #             curr_episode_X[t] = X[ex_i][t]
-        #             curr_episode_Y[t] = Y[ex_i][t]
-        #             # Predict X at t
-        #             curr_node = X[ex_i][t-1]
-        #             goal_node = X[ex_i][-1]
-
-        #             next_node_positional_index = self.model.predict_classes(X[ex_i][t-1], batch_size=1).tolist()[0][0]
-        #             x0, ng_ids = osmnx_utils.get_ng_data(self.graph, curr_node, goal_node)
-        #             next_node_id = ng_ids[next_node_index]
-
-        #             curr_episode_X[t] = osmnx_utils.get_ng_data(self.graph, next_node_id, X[ex_i][len(Y[ex_i])-1])
-        #             curr_episode_Y[t] = Y[ex_i][t]
-            
-        #     X_upd[ex_i] = curr_episode_X
-        #     Y_upd[ex_i] = curr_episode_Y
-
         return X, Y
 
     def on_epoch_begin(self):

@@ -33,6 +33,8 @@ from tensorflow.keras.utils import get_custom_objects
 import tensorflow as tf
 import tensorflow.keras.backend as K
 
+import evaluation_commons
+
 # RE-BUILD A MODEL
 # Use different batch size than when training
 get_custom_objects().update({'softmax_with_temp': model_commons.softmax_with_temp})
@@ -40,7 +42,7 @@ get_custom_objects().update({'softmax_with_temp': model_commons.softmax_with_tem
 old_model = load_model("model.h5")
 old_weights = old_model.get_weights()
 
-model = model_commons.get_model(batch_size=1, timesteps=None, X_dim=20, Y_dim=5, activation=model_commons.softmax_with_temp)
+model = model_commons.get_model(batch_size=1, timesteps=None, X_dim=20, Y_dim=5, activation="softmax")
 model.summary()
 
 model.set_weights(old_weights)
@@ -254,7 +256,7 @@ def create_arg_parser():
 
 def prep_road_network():
     ###### BUIILD A GRAPH ######
-    env = (55.386067, 23.113855, 5000)
+    env = (55.716167, 21.152694, 500)
     name = f'{env[0]}, {env[1]}, {env[2]}.graphml'
 
     if Path('data/', name).is_file():
@@ -274,6 +276,7 @@ def prep_road_network():
     return G
 
 if __name__ == "__main__":
+    total = 500
     G = prep_road_network()
 
     ### EXECUTION PART ###
@@ -282,10 +285,38 @@ if __name__ == "__main__":
 
     if parsed_args.optimality == "true":
         print("[LOG] Running optimality...")
-        run_optimality_evaluation(G)
+        abs_ratios = []
+        ratios = []
+        i = 0
+
+        while (len(abs_ratios) < total):
+            ml_duration, gt_duration = evaluation_commons.run_optimality_evaluation(G, model, randomness=0.02)
+            abs_ratio = gt_duration - ml_duration if ml_duration != None else None
+            ratio = gt_duration / ml_duration if ml_duration != None else None
+            print("id: ", len(abs_ratios))
+
+            if ml_duration != None: abs_ratios.append(abs_ratio)
+            if ml_duration != None: ratios.append(ratio)
+            i+=1
+        
+        avg_abs_ratios = reduce(lambda x, y: x + y, abs_ratios) / len(abs_ratios)
+        avg_ratios = reduce(lambda x, y: x + y, ratios) / len(ratios)
+
+        print(avg_abs_ratios)
+        print(avg_ratios)
 
     if parsed_args.arrival_rate == "true":
-        run_arrival_rate_evaluation(G)
+        arrived = 0
+        total_till_now = 0
+        
+        for i in range(0, total):
+            total_till_now += 1
+            ml_duration, gt_duration = evaluation_commons.run_optimality_evaluation(G, model, randomness=0.02)
+
+            print("id: ", i, ". Abs: ", )
+
+            if ml_duration != None: arrived += 1
+            print(float(arrived) / float(total_till_now))
 
     if parsed_args.dynamic_network == "true":
         run_generalization_evaluation(G, model)

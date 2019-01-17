@@ -101,8 +101,7 @@ def navigation_wrapper(G, start_node_id, goal_node_id, stop_after_steps):
     return ml_route
 
 def predict_next_node_id(G, curr_node_id, goal_node_id, model, randomness=False):
-    x0, ng_ids = get_ng_data(G, curr_node_id, goal_node_id)
-    x = pad_sequences([x0], maxlen=20, dtype='float', value=50000.0)[0]
+    x, x0, ng_ids = data_utils.get_ng_data_formatted(G, curr_node_id, goal_node_id, 20)
     x = x[np.newaxis, ...][np.newaxis, ...]
 
     next_node_index = model.predict_classes(x, batch_size=1).tolist()[0][0]
@@ -116,7 +115,10 @@ def predict_next_node_id(G, curr_node_id, goal_node_id, model, randomness=False)
         else:
             return ng_ids[next_node_index]
     else:
-        return np.random.choice(ng_ids)
+        if len(ng_ids) > 0:
+            return np.random.choice(ng_ids)
+        else:
+            return None
 
 ### DYNAMIC NETWORK CHANGES ###
 # Test how well model follows the optimal path
@@ -189,44 +191,51 @@ def run_arrival_rate_evaluation(G):
 
 ### TIME DIVERGENCE ###
 def run_optimality_evaluation(G):
-    start_node_id = np.random.choice(G.nodes)
-    goal_node_id = np.random.choice(G.nodes)
-
     try:
-        truth_route = nx.shortest_path(G, start_node_id, goal_node_id, weight='best_travel_time')
-    except nx.NetworkXNoPath:
-        print("[ERROR] No path found")
-        return None, None
+        start_node_id = np.random.choice(G.nodes)
+        goal_node_id = np.random.choice(G.nodes)
 
-    curr_node_id = start_node_id
-    ml_route = []
-    visited = collections.deque(maxlen=7)
-
-    # Start node
-    ml_route.append(curr_node_id)
-    use_random_actions = False
-
-    gt_duration = get_route_duration(truth_route, G)
-    history = collections.deque(maxlen=5)
-    while curr_node_id != goal_node_id:
-        curr_node_id = predict_next_node_id(G, curr_node_id, goal_node_id, model, randomness=False)
-        ml_route.append(curr_node_id)
-
-        if get_route_duration(ml_route, G) > gt_duration * 1.5:
-            print("x2 length, try again...")
+        try:
+            truth_route = nx.shortest_path(G, start_node_id, goal_node_id, weight='best_travel_time')
+        except nx.NetworkXNoPath:
+            print("[ERROR] No path found")
             return None, None
 
-    ml_duration = get_route_duration(ml_route, G)
+        curr_node_id = start_node_id
+        ml_route = []
+        visited = collections.deque(maxlen=7)
 
-    # print("------ METRICS ------")
-    # print("GT duration: ", gt_duration, ". ML duration: ", ml_duration, ". Abs Diff: ", ml_duration - gt_duration, ". Ratio: ", gt_duration / ml_duration)
-    # print("---------------------")
+        # Start node
+        ml_route.append(curr_node_id)
+        use_random_actions = False
 
-    ###### PLOT GT AND ML PATHS ######
-    # ox.plot_graph_route(G, truth_route)
-    # ox.plot_graph_route(G, ml_route)
+        gt_duration = get_route_duration(truth_route, G)
+        history = collections.deque(maxlen=5)
 
-    return ml_duration, gt_duration
+        while curr_node_id != goal_node_id:
+            curr_node_id = predict_next_node_id(G, curr_node_id, goal_node_id, model, randomness=False)
+
+            if curr_node_id:
+                ml_route.append(curr_node_id)
+
+            if get_route_duration(ml_route, G) > gt_duration * 1.5:
+                print("x2 length, try again...")
+                return None, None
+
+        ml_duration = get_route_duration(ml_route, G)
+
+        # print("------ METRICS ------")
+        # print("GT duration: ", gt_duration, ". ML duration: ", ml_duration, ". Abs Diff: ", ml_duration - gt_duration, ". Ratio: ", gt_duration / ml_duration)
+        # print("---------------------")
+
+        # ##### PLOT GT AND ML PATHS ######
+        # ox.plot_graph_route(G, truth_route)
+        # ox.plot_graph_route(G, ml_route)
+
+        return ml_duration, gt_duration
+
+    except nx.NetworkXError:
+        return None, None
 
 def create_arg_parser():
     """"Creates and returns the ArgumentParser object."""
@@ -246,7 +255,7 @@ def create_arg_parser():
 
 def prep_road_network():
     ###### BUIILD A GRAPH ######
-    env = (55.386067, 23.113855, 8000)
+    env = (54.681851, 25.268032, 2000)
     name = f'{env[0]}, {env[1]}, {env[2]}.graphml'
 
     if Path('data/', name).is_file():
@@ -310,22 +319,24 @@ if __name__ == "__main__":
 
     ### EXECUTION PART ###
     # TODO - refactor this shit
-    mini_batch_size = 64
-    model = None
+    mini_batch_size = 16
+    times = 0
 
     model = model_commons.get_model(batch_size=1, timesteps=None, X_dim=20, Y_dim=5, activation="softmax")
+    pred_prob = 0.01
     while True:
+        times += 1
         model = reload_model(model, batch_size=1)
 
-        data = []
-        for i in range(0, mini_batch_size * 2):
-            print("-----")
-            print("Generating: ", i)
-            print("-----")
+        if times % 10 == 0:
+            pred_prob += 0.02
 
+        data = []
+        for i in range(0, mini_batch_size * 10):
+            print("generating: ", i)
             start_node_id = np.random.choice(G.nodes)
             goal_node_id = np.random.choice(G.nodes)
-            episode = generate_one_episode_with_imitation(G, model, start_node_id, goal_node_id, pred_prob = 0.05)
+            episode = generate_one_episode_with_imitation(G, model, start_node_id, goal_node_id, pred_prob = pred_prob)
 
             if episode == None:
                 continue
@@ -347,14 +358,14 @@ if __name__ == "__main__":
         # Do the training, evaluate, repeat if necessary
         model = reload_model(model, batch_size=mini_batch_size)
         #train_episodes, test_episodes = train_test_split(data, train_size=0.95)
-        train_episodes, validation_episodes = train_test_split(data, train_size=0.7)
+        train_episodes, validation_episodes = train_test_split(data, train_size=0.8)
 
-        train_episodes = sorted(train_episodes, key=lambda ep: len(ep[1]))
+        train_episodes = sorted(train_episodes, key=lambda ep: len(ep[1]), reverse=True)
         #test_episodes = sorted(test_episodes, key=lambda ep: len(ep[1]), reverse=True)
         validation_episodes = sorted(validation_episodes, key=lambda ep: len(ep[1]), reverse=True)
 
-        placeholder_x = [0] * len(data[0][0][0])
-        placeholder_y = [0] * len(data[0][1][0])
+        placeholder_x = [0] * 20
+        placeholder_y = [0] * 5
 
         train_episodes = training_utils.bucketing(bucket_size=mini_batch_size, episodes=train_episodes, placeholder_timestep=[placeholder_x, placeholder_y])
         #test_episodes = training_utils.bucketing(bucket_size=mini_batch_size, episodes=test_episodes, placeholder_timestep=[placeholder_x, placeholder_y])
